@@ -45,7 +45,7 @@ class MainActivity : AppCompatActivity() {
         private const val SMOOTH_JS = """(function(){
 if(document.getElementById('__gm_smooth'))return;
 var s=document.createElement('style');s.id='__gm_smooth';
-s.textContent='html,body{overscroll-behavior:none!important;-webkit-tap-highlight-color:transparent!important;touch-action:manipulation!important}*{-webkit-overflow-scrolling:touch}[class*=scroll],[class*=Scroll],main,[role=main]{overscroll-behavior:contain!important;will-change:scroll-position;transform:translateZ(0)}::-webkit-scrollbar{width:0;height:0}';
+s.textContent='html,body{overscroll-behavior-y:none!important;-webkit-tap-highlight-color:transparent!important}::-webkit-scrollbar{width:0!important;height:0!important}';
 (document.head||document.documentElement).appendChild(s);
 })();"""
     }
@@ -118,7 +118,7 @@ s.textContent='html,body{overscroll-behavior:none!important;-webkit-tap-highligh
             mediaPlaybackRequiresUserGesture = false
             javaScriptCanOpenWindowsAutomatically = false
             setSupportMultipleWindows(false)
-            loadWithOverviewMode = true
+            loadWithOverviewMode = false
             useWideViewPort = true
             builtInZoomControls = false
             displayZoomControls = false
