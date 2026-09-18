@@ -25,6 +25,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.webkit.WebSettingsCompat
+import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import java.net.URL
 
@@ -48,16 +49,25 @@ var s=document.createElement('style');s.id='__gm_smooth';
 s.textContent=[
 'html,body{overscroll-behavior-y:none!important;-webkit-tap-highlight-color:transparent!important}',
 '::-webkit-scrollbar{width:0!important;height:0!important}',
-/* Off-screen chat turns are skipped by layout & paint -> long chats scroll like short ones */
-'.conversation-container,user-query,model-response,message-content{content-visibility:auto;contain-intrinsic-size:auto 320px}',
-/* GPU-expensive effects on low-end phones */
-'*{backdrop-filter:none!important;-webkit-backdrop-filter:none!important;text-shadow:none!important}',
-'.response-container,.markdown,.markdown *,code,pre{box-shadow:none!important;animation:none!important;transition:none!important}',
-/* Streaming text: no per-chunk fade/blur/typing animations */
-'.streaming *,[class*=streaming],[class*=typing],[class*=shimmer],[class*=skeleton]{animation:none!important;transition:none!important;filter:none!important}'
+/* Off-screen chat turns skipped by layout & paint */
+'.conversation-container,user-query,model-response{content-visibility:auto;contain-intrinsic-size:auto 320px}',
+/* Side nav, menus, dialogs, bottom sheets: instant open, no blur/shadow/slide */
+'mat-sidenav,.mat-drawer,.mat-drawer-backdrop,.mat-sidenav-content,.cdk-overlay-container,.cdk-overlay-pane,.cdk-overlay-backdrop,.cdk-overlay-dark-backdrop,.mat-mdc-menu-panel,.mat-mdc-dialog-container,.mat-bottom-sheet-container,.mat-mdc-select-panel,.mat-mdc-tooltip,.mat-mdc-snack-bar-container,bard-sidenav,side-navigation,.side-nav,.side-nav-menu-button{animation:none!important;transition:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;box-shadow:none!important;filter:none!important}',
+'.mat-drawer-transition .mat-drawer,.mat-drawer-transition .mat-drawer-content,.mat-drawer-transition .mat-drawer-backdrop{transition:none!important}',
+'.cdk-overlay-backdrop{opacity:1!important;background:rgba(0,0,0,.4)!important}',
+'.mat-drawer{transform:none!important}',
+/* Ripples & elevation shadows cost a compositor layer per press */
+'.mat-ripple,.mat-mdc-button-ripple,.mdc-button__ripple,.mat-mdc-button-persistent-ripple,.mat-mdc-focus-indicator,.mdc-icon-button__ripple,.mat-mdc-list-item-interactive::before{display:none!important}',
+'.mat-elevation-z2,.mat-elevation-z4,.mat-elevation-z8,.mat-elevation-z16,.mat-elevation-z24,[class*=elevation]{box-shadow:none!important}',
+/* Streaming/typing animations */
+'.streaming *,[class*=streaming],[class*=typing],[class*=shimmer],[class*=skeleton],.loading-indicator,.thinking-indicator{animation:none!important;transition:none!important;filter:none!important}',
+/* Global: cap every animation/transition to near-instant instead of disabling (keeps Angular animation callbacks firing) */
+'*,*::before,*::after{animation-duration:.01ms!important;animation-delay:0s!important;transition-duration:.01ms!important;transition-delay:0s!important}'
 ].join('');
 (document.head||document.documentElement).appendChild(s);
-/* Throttle the site's per-token scroll-into-view calls during streaming to at most one per frame */
+/* Angular Material reads prefers-reduced-motion -> skips its JS-driven animations entirely */
+try{var m=window.matchMedia;window.matchMedia=function(q){var r=m.call(window,q);if(/prefers-reduced-motion/.test(q)&&/reduce/.test(q)){return{matches:true,media:q,onchange:null,addListener:function(){},removeListener:function(){},addEventListener:function(){},removeEventListener:function(){},dispatchEvent:function(){return false}}}return r}}catch(e){}
+/* Throttle per-token scrollIntoView during streaming to once per frame, no smooth scrolling */
 var raf=0,orig=Element.prototype.scrollIntoView;
 Element.prototype.scrollIntoView=function(a){var el=this;if(raf)return;raf=requestAnimationFrame(function(){raf=0;try{orig.call(el,a&&typeof a==='object'?Object.assign({},a,{behavior:'auto'}):a)}catch(e){}})};
 })();"""
@@ -160,6 +170,10 @@ Element.prototype.scrollIntoView=function(a){var el=this;if(raf)return;raf=reque
         if (Build.VERSION.SDK_INT >= 33) {
             // Chromium already defers offscreen work; make sure prerender/prefetch is on.
             web.settings.safeBrowsingEnabled = false
+        }
+
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+            WebViewCompat.addDocumentStartJavaScript(web, SMOOTH_JS, setOf("https://gemini.google.com"))
         }
 
         CookieManager.getInstance().apply {
