@@ -24,7 +24,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
-import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewFeature
 import java.net.URL
@@ -40,10 +39,18 @@ class MainActivity : AppCompatActivity() {
         )
         // Desktop-class Chrome UA on Android keeps Google serving the full, fast web app.
         private const val UA_SUFFIX = " GeminiApp/1.0"
+
+        // Injected once per page: momentum scrolling, no tap-highlight flash, no 300 ms tap delay,
+        // GPU-promoted scroll containers and no overscroll glow/refresh gestures inside the page.
+        private const val SMOOTH_JS = """(function(){
+if(document.getElementById('__gm_smooth'))return;
+var s=document.createElement('style');s.id='__gm_smooth';
+s.textContent='html,body{overscroll-behavior:none!important;-webkit-tap-highlight-color:transparent!important;touch-action:manipulation!important}*{-webkit-overflow-scrolling:touch}[class*=scroll],[class*=Scroll],main,[role=main]{overscroll-behavior:contain!important;will-change:scroll-position;transform:translateZ(0)}::-webkit-scrollbar{width:0;height:0}';
+(document.head||document.documentElement).appendChild(s);
+})();"""
     }
 
     private lateinit var web: WebView
-    private lateinit var swipe: SwipeRefreshLayout
     private lateinit var progress: ProgressBar
     private lateinit var offline: View
     private var fileCallback: ValueCallback<Array<Uri>>? = null
@@ -76,17 +83,11 @@ class MainActivity : AppCompatActivity() {
 
         setContentView(R.layout.activity_main)
         web = findViewById(R.id.webview)
-        swipe = findViewById(R.id.swipe)
         progress = findViewById(R.id.progress)
         offline = findViewById(R.id.offline)
         findViewById<View>(R.id.retry).setOnClickListener { offline.visibility = View.GONE; web.reload() }
 
         configureWebView()
-
-        swipe.setColorSchemeColors(ContextCompat.getColor(this, R.color.accent))
-        swipe.setOnRefreshListener { web.reload() }
-        // Only allow pull-to-refresh when the page is scrolled to the very top.
-        swipe.setOnChildScrollUpCallback { _, _ -> web.scrollY > 0 }
 
         if (savedInstanceState != null) web.restoreState(savedInstanceState)
         else web.loadUrl(intent?.dataString?.takeIf { it.startsWith("https://gemini.google.com") } ?: HOME)
@@ -98,15 +99,22 @@ class MainActivity : AppCompatActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     private fun configureWebView() {
         web.setBackgroundColor(ContextCompat.getColor(this, R.color.bg))
-        web.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+        // LAYER_TYPE_NONE lets Chromium's own compositor drive rendering (faster than a
+        // forced hardware layer, which re-uploads the full texture on every scroll frame).
+        web.setLayerType(View.LAYER_TYPE_NONE, null)
         web.isVerticalScrollBarEnabled = false
         web.isHorizontalScrollBarEnabled = false
+        web.overScrollMode = View.OVER_SCROLL_NEVER
+        web.isNestedScrollingEnabled = false
+        web.isHapticFeedbackEnabled = false
+        web.isLongClickable = true
 
         web.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
             databaseEnabled = true
-            cacheMode = WebSettings.LOAD_DEFAULT
+            // Serve HTTP cache first, revalidate afterwards -> instant paint even on slow networks.
+            cacheMode = if (ShellCache.hasCachedShell()) WebSettings.LOAD_CACHE_ELSE_NETWORK else WebSettings.LOAD_DEFAULT
             mediaPlaybackRequiresUserGesture = false
             javaScriptCanOpenWindowsAutomatically = false
             setSupportMultipleWindows(false)
@@ -124,6 +132,7 @@ class MainActivity : AppCompatActivity() {
             textZoom = 100
             setGeolocationEnabled(false)
             userAgentString = userAgentString.replace("; wv", "") + UA_SUFFIX
+            offscreenPreRaster = true   // rasterise tiles just outside the viewport -> no blank areas on fast fling
         }
 
         if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
@@ -167,20 +176,22 @@ class MainActivity : AppCompatActivity() {
             override fun onPageCommitVisible(view: WebView, url: String) {
                 firstPaintDone = true
                 offline.visibility = View.GONE
+                view.evaluateJavascript(SMOOTH_JS, null)
             }
 
             override fun onPageFinished(view: WebView, url: String) {
                 firstPaintDone = true
-                swipe.isRefreshing = false
+                // After the first load switch back to normal cache mode so content stays fresh.
+                view.settings.cacheMode = WebSettings.LOAD_DEFAULT
+                view.evaluateJavascript(SMOOTH_JS, null)
                 progress.visibility = View.GONE
                 CookieManager.getInstance().flush()
             }
 
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: android.webkit.WebResourceError) {
-                if (request.isForMainFrame) {
+                if (request.isForMainFrame && !ShellCache.hasCachedShell()) {
                     firstPaintDone = true
-                    swipe.isRefreshing = false
-                    progress.visibility = View.GONE
+                        progress.visibility = View.GONE
                     offline.visibility = View.VISIBLE
                 }
             }

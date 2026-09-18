@@ -52,11 +52,13 @@ object ShellCache {
         if (accept != null && accept.startsWith("application/json")) return false
         val path = url.path.lowercase()
         // Never cache HTML documents or Google's batchexecute / RPC content endpoints.
-        if (path.contains("batchexecute") || path.contains("/_/") && !path.contains("/_/js/") && !path.contains("/_/ss/")) return false
+        if (path.contains("batchexecute") || path.contains("/data/") || path.endsWith("/app") || path.contains("/app/")) return false
         val ext = path.substringAfterLast('.', "")
         if (ext in STATIC_EXT) return true
         // gstatic serves versioned bundles without extensions, e.g. /_/js/k=... and /_/ss/k=...
-        return url.host in STATIC_HOSTS && (path.contains("/_/js/") || path.contains("/_/ss/"))
+        if (url.host in STATIC_HOSTS && (path.contains("/_/js/") || path.contains("/_/ss/"))) return true
+        // gemini.google.com serves its own versioned UI bundles here; content RPCs live under /_/BardChatUi/data/
+        return url.host == "gemini.google.com" && path.startsWith("/_/bardchatui/") && !path.contains("/data/")
     }
 
     fun serve(url: URL, headers: Map<String, String>): WebResourceResponse? {
@@ -106,6 +108,9 @@ object ShellCache {
             tmp.renameTo(File(dir, key))
         } catch (_: Exception) {}
     }
+
+    /** True once at least one shell asset is on disk – the structure can render offline. */
+    fun hasCachedShell(): Boolean = dir.listFiles()?.any { !it.name.endsWith(".m") && !it.name.endsWith(".tmp") } == true
 
     fun clear() { io.execute { dir.listFiles()?.forEach { it.delete() } } }
 
