@@ -70,7 +70,7 @@ object ShellCache {
             if (System.currentTimeMillis() - body.lastModified() > REVALIDATE_AFTER_MS) revalidate(url, headers, key)
             return WebResourceResponse(mime, "utf-8", 200, "OK",
                 mapOf("Access-Control-Allow-Origin" to "*", "X-Shell-Cache" to "HIT"),
-                body.inputStream().buffered(64 * 1024))
+                body.inputStream().buffered(128 * 1024))
         }
         // Cache miss: fetch synchronously (WebView calls us off the UI thread), store and stream.
         return fetch(url, headers, key)

@@ -43,10 +43,23 @@ class MainActivity : AppCompatActivity() {
         // Injected once per page: momentum scrolling, no tap-highlight flash, no 300 ms tap delay,
         // GPU-promoted scroll containers and no overscroll glow/refresh gestures inside the page.
         private const val SMOOTH_JS = """(function(){
-if(document.getElementById('__gm_smooth'))return;
+if(window.__gmPerf)return;window.__gmPerf=1;
 var s=document.createElement('style');s.id='__gm_smooth';
-s.textContent='html,body{overscroll-behavior-y:none!important;-webkit-tap-highlight-color:transparent!important}::-webkit-scrollbar{width:0!important;height:0!important}';
+s.textContent=[
+'html,body{overscroll-behavior-y:none!important;-webkit-tap-highlight-color:transparent!important}',
+'::-webkit-scrollbar{width:0!important;height:0!important}',
+/* Off-screen chat turns are skipped by layout & paint -> long chats scroll like short ones */
+'.conversation-container,user-query,model-response,message-content{content-visibility:auto;contain-intrinsic-size:auto 320px}',
+/* GPU-expensive effects on low-end phones */
+'*{backdrop-filter:none!important;-webkit-backdrop-filter:none!important;text-shadow:none!important}',
+'.response-container,.markdown,.markdown *,code,pre{box-shadow:none!important;animation:none!important;transition:none!important}',
+/* Streaming text: no per-chunk fade/blur/typing animations */
+'.streaming *,[class*=streaming],[class*=typing],[class*=shimmer],[class*=skeleton]{animation:none!important;transition:none!important;filter:none!important}'
+].join('');
 (document.head||document.documentElement).appendChild(s);
+/* Throttle the site's per-token scroll-into-view calls during streaming to at most one per frame */
+var raf=0,orig=Element.prototype.scrollIntoView;
+Element.prototype.scrollIntoView=function(a){var el=this;if(raf)return;raf=requestAnimationFrame(function(){raf=0;try{orig.call(el,a&&typeof a==='object'?Object.assign({},a,{behavior:'auto'}):a)}catch(e){}})};
 })();"""
     }
 
@@ -113,8 +126,7 @@ s.textContent='html,body{overscroll-behavior-y:none!important;-webkit-tap-highli
             javaScriptEnabled = true
             domStorageEnabled = true
             databaseEnabled = true
-            // Serve HTTP cache first, revalidate afterwards -> instant paint even on slow networks.
-            cacheMode = if (ShellCache.hasCachedShell()) WebSettings.LOAD_CACHE_ELSE_NETWORK else WebSettings.LOAD_DEFAULT
+            cacheMode = WebSettings.LOAD_DEFAULT   // static shell is served from ShellCache; content must stay fresh
             mediaPlaybackRequiresUserGesture = false
             javaScriptCanOpenWindowsAutomatically = false
             setSupportMultipleWindows(false)
@@ -132,11 +144,18 @@ s.textContent='html,body{overscroll-behavior-y:none!important;-webkit-tap-highli
             textZoom = 100
             setGeolocationEnabled(false)
             userAgentString = userAgentString.replace("; wv", "") + UA_SUFFIX
-            offscreenPreRaster = true   // rasterise tiles just outside the viewport -> no blank areas on fast fling
+            offscreenPreRaster = false  // extra raster/RAM on low-end GPUs -> more jank than it saves
         }
 
+        // Gemini ships its own native dark theme; algorithmic darkening would re-process every
+        // paint on the CPU and is a major source of scroll/streaming jank -> keep it OFF.
         if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
-            WebSettingsCompat.setAlgorithmicDarkeningAllowed(web.settings, true)
+            WebSettingsCompat.setAlgorithmicDarkeningAllowed(web.settings, false)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            // Never let the OS throttle the renderer while we are visible (prevents "freezes"
+            // that appear after the app has been open for a while).
+            web.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false)
         }
         if (Build.VERSION.SDK_INT >= 33) {
             // Chromium already defers offscreen work; make sure prerender/prefetch is on.
@@ -181,8 +200,6 @@ s.textContent='html,body{overscroll-behavior-y:none!important;-webkit-tap-highli
 
             override fun onPageFinished(view: WebView, url: String) {
                 firstPaintDone = true
-                // After the first load switch back to normal cache mode so content stays fresh.
-                view.settings.cacheMode = WebSettings.LOAD_DEFAULT
                 view.evaluateJavascript(SMOOTH_JS, null)
                 progress.visibility = View.GONE
                 CookieManager.getInstance().flush()
@@ -257,11 +274,6 @@ s.textContent='html,body{overscroll-behavior-y:none!important;-webkit-tap-highli
         web.onPause(); web.pauseTimers()
         CookieManager.getInstance().flush()
         super.onPause()
-    }
-
-    override fun onTrimMemory(level: Int) {
-        super.onTrimMemory(level)
-        if (level >= TRIM_MEMORY_MODERATE) web.clearCache(false)
     }
 
     override fun onDestroy() {
