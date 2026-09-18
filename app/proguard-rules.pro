@@ -1,0 +1,3 @@
+-keepclassmembers class com.gemini.webapp.** { public *; }
+-keepattributes JavascriptInterface
+-dontwarn org.chromium.**
